@@ -57,18 +57,23 @@ class Video:
         
         self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1])
         self.EDGE_WHEEL = itertools.cycle([None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2])
-        
         self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
+        
+        # =============================================================================
+        # USER MESSAGES BASED ON CURRENT ACTIVITY
+        # =============================================================================
         self.FLIP_MESSAGES = {None: 'No Corrections',
                               0: 'Vertical Mirror',
                               1: 'Horizontal Mirror',
                               -1: 'Horizontal and Vertical Mirror'
                               }
+        
         self.EDGE_MESSAGES = {None: "No Corrections",
                               self._edge_canny: "Canny",
                               self._edge_laplacian1: "Laplacian 1",
                               self._edge_laplacian2: "Laplacian 2"
                               }
+        
         self.BLUR_MESSAGES = lambda k: f"Kernel {k}" if k else "No Smoothing"
         self.ROTATE_MESSAGES = lambda k: f"Rotated {k} deg." if k else "No Rotation"
         self.TRANSLATE_MESSAGES = lambda dx, dy: f"(x, y): ({dx}, {dy})" if dx | dy else "No Translation"
@@ -104,8 +109,6 @@ class Video:
                     self.change_mode(direction)
                 self.update_message(direction)
             
-            
-            
             # Modify frame
             frame = self.translate(frame)
             frame = self.rotate(frame)
@@ -113,21 +116,10 @@ class Video:
             frame = self.blur(frame)
             frame = self.edge_detection(frame)
             
-            
-            
-            
-            
             # Blit message to the user (like current setting or value)
             self.add_message(frame)
             
-            
-            
-            
-            
-            
             cv.imshow("Video", frame)
-    
-    
     
         capture.release()
         cv.destroyAllWindows()
@@ -224,9 +216,9 @@ class Video:
         if angle == 0:
             return frame
         width, height = frame.shape[:2]
-        center = width // 2, height // 2
+        center = height // 2, width // 2
         rotation_matrix = cv.getRotationMatrix2D(center, angle, 1.0) # point_of_rotation, angle, scale
-        return cv.warpAffine(frame, rotation_matrix, (width, height))
+        return cv.warpAffine(frame, rotation_matrix, (height, width))
         
     # =============================================================================
     # EDGE AND BLUR FILTERS 
