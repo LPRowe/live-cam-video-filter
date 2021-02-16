@@ -17,6 +17,13 @@
 # Once face tracking is added, ahve a draw or stamp feature that moves the drawing (mustache or glasses) with the face and
 # resizes it based on the height and width of the face detection box and recenters it accordingly
 
+
+
+# TODO:
+# Add a frame option for cropped frames that can go over the video
+
+
+
 import time
 import itertools
 
@@ -35,15 +42,19 @@ class Video:
                           2424832: "LEFT",
                           2490368: "UP"}
         
-        self.SUBMODES = {"TRANSLATION": None, # current mode index, [dx, dy] values
+        self.SUBMODES = {"TRANSLATE_X": 0,    # pixel offset x direction
+                         "TRANSLATE_Y": 0,    # pixel offset y direction
                          "FLIP": None,        # image flip horiz, vert, both
-                         "ROTATION": None,    # image rotation angle
-                         "EDGE": self._edge_canny,        # change the edge detection mode
+                         "ROTATE": 0,         # image rotation angle
+                         "EDGE": None,        # change the edge detection mode
                          "SCALE_X": None,     # adjust x scale of the image
-                         "SCALE_Y": None      # adjust y scale of the image
+                         "SCALE_Y": None,     # adjust y scale of the image
+                         "BLUR": None         # control how much the image is blurred
                          }
         
-        self.MODE_WHEEL = ["FLIP", "EDGE", ""] # list of modes
+        self.MODE_WHEEL = ["FLIP", "EDGE", "BLUR", "COLOR", 
+                           "TRANSLATE_X", "TRANSLATE_Y", "ROTATE"] # list of modes
+        
         self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1])
         self.EDGE_WHEEL = itertools.cycle([None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2])
         
@@ -58,11 +69,15 @@ class Video:
                               self._edge_laplacian1: "Laplacian 1",
                               self._edge_laplacian2: "Laplacian 2"
                               }
+        self.BLUR_MESSAGES = lambda k: f"Kernel {k}" if k else "No Smoothing"
+        self.ROTATE_MESSAGES = lambda k: f"Rotated {k} deg." if k else "No Rotation"
+        self.TRANSLATE_MESSAGES = lambda dx, dy: f"(x, y): ({dx}, {dy})" if dx | dy else "No Translation"
         
     def reset(self):
-        self.SUBMODES = {"TRANSLATION": None, # current mode index, [dx, dy] values
+        self.SUBMODES = {"TRANSLATE_X": None, # pixel offset x direction
+                         "TRANSLATE_Y": None, # pixel offset y direction
                          "FLIP": None,        # image flip horiz, vert, both
-                         "ROTATION": None,    # image rotation angle
+                         "ROTATE": None,      # image rotation angle
                          "EDGE": 0,
                          "BLUR": None
                          }
@@ -72,7 +87,7 @@ class Video:
             
         capture = cv.VideoCapture(0)
         while True:
-            isTrue, frame = capture.read()
+            is_running, frame = capture.read()
             key = cv.waitKeyEx(self.FRAME_SPEED)
             if key != -1:
                 print(key)
@@ -91,10 +106,14 @@ class Video:
             
             
             
-            # Edit frame
+            # Modify frame
+            frame = self.translate(frame)
+            frame = self.rotate(frame)
             frame = self.flip(frame)
-            
+            frame = self.blur(frame)
             frame = self.edge_detection(frame)
+            
+            
             
             
             
@@ -114,7 +133,7 @@ class Video:
         cv.destroyAllWindows()
 
     # =============================================================================
-    # MODES
+    # ADJUST MODE / SETTINGS
     # =============================================================================
     def change_mode(self, direction):
         self.MODE = (self.MODE + 1) if direction == "RIGHT" else (self.MODE - 1)
@@ -127,10 +146,25 @@ class Video:
             self.SUBMODES[mode] = next(self.FLIP_WHEEL)
         elif mode == "EDGE":
             self.SUBMODES[mode] = next(self.EDGE_WHEEL)
+        elif mode == "BLUR":
+            if self.SUBMODES[mode] is None:
+                self.SUBMODES[mode] = 1
+            if direction == 'UP':
+                self.SUBMODES[mode] = min(15, self.SUBMODES[mode] + 1)
+            else:
+                self.SUBMODES[mode] -= 1
+                if self.SUBMODES[mode] <= 1:
+                    self.SUBMODES[mode] = None
+        elif mode == "TRANSLATE_X":
+            self.SUBMODES[mode] += 1 if direction == 'UP' else -1
+        elif mode == "TRANSLATE_Y":
+            self.SUBMODES[mode] += -1 if direction == 'UP' else 1
+        elif mode == "ROTATE":
+            self.SUBMODES[mode] += 1 if direction == 'UP' else -1
+            self.SUBMODES[mode] %= 360
             
     def get_mode(self):
         return self.MODE_WHEEL[self.MODE]
-    
     
     # =============================================================================
     # MESSAGES
@@ -149,13 +183,27 @@ class Video:
                 self.MESSAGE = self.FLIP_MESSAGES[self.SUBMODES['FLIP']]
             elif mode == 'EDGE':
                 self.MESSAGE = self.EDGE_MESSAGES[self.SUBMODES['EDGE']]
+            elif mode == 'BLUR':
+                self.MESSAGE = self.BLUR_MESSAGES(self.SUBMODES['BLUR'])
+            elif 'TRANSLATE' in mode:
+                self.MESSAGE = self.TRANSLATE_MESSAGES(self.SUBMODES['TRANSLATE_X'], self.SUBMODES['TRANSLATE_Y'])
+            elif mode == 'ROTATE':
+                self.MESSAGE = self.ROTATE_MESSAGES(self.SUBMODES['ROTATE'])
         
         # MODE CHANGES
         else:
             self.MESSAGE = self.get_mode()
+            
+    # =============================================================================
+    # COLOR OPTIONS
+    # =============================================================================
+    def color_schemes(self, frame):
+        """Split frame into RGB then recombine fractions of the frame to accentuate R, G, B"""
+        pass
+
     
     # =============================================================================
-    # FILTERS    
+    # GEOMETRIC FILTERS    
     # =============================================================================
     def flip(self, frame):
         """Mirrors the image."""
@@ -164,18 +212,24 @@ class Video:
             return frame
         return cv.flip(frame, val)
     
-    def translation(self, frame):
-        val = self.SUBMODES["TRANSLATION"]
-        if val is None:
+    def translate(self, frame):
+        dx, dy = self.SUBMODES["TRANSLATE_X"], self.SUBMODES["TRANSLATE_Y"]
+        if (dx | dy) == 0:
             return frame
+        translation_matrix = np.float32([[1, 0, dx], [0, 1, dy]])
+        return cv.warpAffine(frame, translation_matrix, (frame.shape[1], frame.shape[0]))
     
-    def rotation(self, frame):
-        val = self.SUBMODES["ROTATION"]
-        if val is None:
+    def rotate(self, frame):
+        angle = self.SUBMODES["ROTATE"]
+        if angle == 0:
             return frame
-    
+        width, height = frame.shape[:2]
+        center = width // 2, height // 2
+        rotation_matrix = cv.getRotationMatrix2D(center, angle, 1.0) # point_of_rotation, angle, scale
+        return cv.warpAffine(frame, rotation_matrix, (width, height))
+        
     # =============================================================================
-    # EDGE FILTERS    
+    # EDGE AND BLUR FILTERS 
     # =============================================================================
     def _edge_canny(self, frame):
         return cv.Canny(frame, 125, 175)
@@ -197,13 +251,14 @@ class Video:
         val = self.SUBMODES["BLUR"]
         if val is None:
             return frame
-        return cv.GaussianBlur(frame, (5, 5), cv.BORDER_DEFAULT)
+        return cv.blur(frame, (val, val))
         
-        
+
+
 
 if __name__ == "__main__":
     settings = {
-                'FRAME_SPEED': 20, # one frame per 20 ms
+                'FRAME_SPEED': 50, # one frame per 20 ms
                 'MODE': 0,
                 'SUBMODE': 0
                 }
