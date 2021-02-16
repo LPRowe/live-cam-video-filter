@@ -20,7 +20,11 @@
 
 
 # TODO:
-# Add a frame option for cropped frames that can go over the video
+# Add a mask that can go over the video
+# Add a skew option
+# Add a drawing option
+# add a reset button
+# update readme (remember ctrl c and ctrl s functions work)
 
 
 
@@ -49,15 +53,17 @@ class Video:
                          "EDGE": None,        # change the edge detection mode
                          "SCALE_X": None,     # adjust x scale of the image
                          "SCALE_Y": None,     # adjust y scale of the image
-                         "BLUR": None         # control how much the image is blurred
+                         "BLUR": None,        # control how much the image is blurred
+                         "COLOR": None        # adjust the image colors
                          }
+        
+        self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
         
         self.MODE_WHEEL = ["FLIP", "EDGE", "BLUR", "COLOR", 
                            "TRANSLATE_X", "TRANSLATE_Y", "ROTATE"] # list of modes
-        
-        self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1])
-        self.EDGE_WHEEL = itertools.cycle([None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2])
-        self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
+        self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1]) # cycle through 3 image flip options
+        self.EDGE_WHEEL = itertools.cycle([None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2]) # cycle through 3 edge detectors
+        self.COLOR_WHEEL = itertools.cycle([None, self._hue_saturation_value, self._gray, self._lab, self._red, self._green, self._blue])
         
         # =============================================================================
         # USER MESSAGES BASED ON CURRENT ACTIVITY
@@ -74,8 +80,17 @@ class Video:
                               self._edge_laplacian2: "Laplacian 2"
                               }
         
+        self.COLOR_MESSAGES = {None: "No Corrections",
+                               self._red: "Red",
+                               self._green: "Green",
+                               self._blue: "Blue",
+                               self._gray: "Gray Scale",
+                               self._hue_saturation_value: "Hue Saturated",
+                               self._lab: "L*a*b"
+                               }
+    
         self.BLUR_MESSAGES = lambda k: f"Kernel {k}" if k else "No Smoothing"
-        self.ROTATE_MESSAGES = lambda k: f"Rotated {k} deg." if k else "No Rotation"
+        self.ROTATE_MESSAGES = lambda alpha: f"Rotated {alpha} deg." if alpha else "No Rotation"
         self.TRANSLATE_MESSAGES = lambda dx, dy: f"(x, y): ({dx}, {dy})" if dx | dy else "No Translation"
         
     def reset(self):
@@ -110,6 +125,7 @@ class Video:
                 self.update_message(direction)
             
             # Modify frame
+            frame = self.adjust_color(frame)
             frame = self.translate(frame)
             frame = self.rotate(frame)
             frame = self.flip(frame)
@@ -154,6 +170,8 @@ class Video:
         elif mode == "ROTATE":
             self.SUBMODES[mode] += 1 if direction == 'UP' else -1
             self.SUBMODES[mode] %= 360
+        elif mode == "COLOR":
+            self.SUBMODES[mode] = next(self.COLOR_WHEEL)
             
     def get_mode(self):
         return self.MODE_WHEEL[self.MODE]
@@ -181,6 +199,8 @@ class Video:
                 self.MESSAGE = self.TRANSLATE_MESSAGES(self.SUBMODES['TRANSLATE_X'], self.SUBMODES['TRANSLATE_Y'])
             elif mode == 'ROTATE':
                 self.MESSAGE = self.ROTATE_MESSAGES(self.SUBMODES['ROTATE'])
+            elif mode == "COLOR":
+                self.MESSAGE = self.COLOR_MESSAGES[self.SUBMODES['COLOR']]
         
         # MODE CHANGES
         else:
@@ -189,11 +209,43 @@ class Video:
     # =============================================================================
     # COLOR OPTIONS
     # =============================================================================
-    def color_schemes(self, frame):
-        """Split frame into RGB then recombine fractions of the frame to accentuate R, G, B"""
-        pass
-
+    def _dummy_layer(self, frame):
+        """Returns frame of all zero valued pixels"""
+        return np.full(frame.shape[:2], 0, dtype='uint8')
     
+    def _red(self, frame):
+        """returns only the red components of the image"""
+        dummy = self._dummy_layer(frame)
+        return cv.merge([dummy, dummy, cv.split(frame)[2]])
+    
+    def _green(self, frame):
+        """returns only the green components of the image"""
+        dummy = self._dummy_layer(frame)
+        return cv.merge([dummy, cv.split(frame)[1], dummy])
+    
+    def _blue(self, frame):
+        """returns only the blue components of the image"""
+        dummy = self._dummy_layer(frame)
+        return cv.merge([cv.split(frame)[0], dummy, dummy])
+    
+    def _gray(self, frame):
+        """returns a gray scale image"""
+        return cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+    
+    def _hue_saturation_value(self, frame):
+        """returns a hue saturated image"""
+        return cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    
+    def _lab(self, frame):
+        """returns L*a*b image"""
+        return cv.cvtColor(frame, cv.COLOR_BGR2LAB)
+    
+    def adjust_color(self, frame):
+        func = self.SUBMODES["COLOR"]
+        if func is None:
+            return frame
+        return func(frame)
+
     # =============================================================================
     # GEOMETRIC FILTERS    
     # =============================================================================
@@ -244,9 +296,6 @@ class Video:
         if val is None:
             return frame
         return cv.blur(frame, (val, val))
-        
-
-
 
 if __name__ == "__main__":
     settings = {
@@ -266,32 +315,3 @@ if __name__ == "__main__":
     
     video = Video(**settings, **text_settings)
     video.run()
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
