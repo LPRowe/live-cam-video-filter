@@ -17,44 +17,54 @@
 # Once face tracking is added, ahve a draw or stamp feature that moves the drawing (mustache or glasses) with the face and
 # resizes it based on the height and width of the face detection box and recenters it accordingly
 
-
 import time
 import itertools
 
 import cv2 as cv
 import numpy as np
 
-
 class Video:
+    
     def __init__(self, **kwargs):
+        
         for key in kwargs:
             self.__dict__[key] = kwargs[key]
+            
         self.ARROW_MAP = {2555904: "RIGHT",
                           2621440: "DOWN",
                           2424832: "LEFT",
                           2490368: "UP"}
+        
         self.SUBMODES = {"TRANSLATION": None, # current mode index, [dx, dy] values
                          "FLIP": None,        # image flip horiz, vert, both
                          "ROTATION": None,    # image rotation angle
-                         "EDGE": 0,        # change the edge detection mode
+                         "EDGE": self._edge_canny,        # change the edge detection mode
                          "SCALE_X": None,     # adjust x scale of the image
                          "SCALE_Y": None      # adjust y scale of the image
                          }
-        self.MODE_WHEEL = ["FLIP", "", ""] # list of modes
-        self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1])
-        self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
         
+        self.MODE_WHEEL = ["FLIP", "EDGE", ""] # list of modes
+        self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1])
+        self.EDGE_WHEEL = itertools.cycle([None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2])
+        
+        self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
         self.FLIP_MESSAGES = {None: 'No Corrections',
                               0: 'Vertical Mirror',
                               1: 'Horizontal Mirror',
                               -1: 'Horizontal and Vertical Mirror'
+                              }
+        self.EDGE_MESSAGES = {None: "No Corrections",
+                              self._edge_canny: "Canny",
+                              self._edge_laplacian1: "Laplacian 1",
+                              self._edge_laplacian2: "Laplacian 2"
                               }
         
     def reset(self):
         self.SUBMODES = {"TRANSLATION": None, # current mode index, [dx, dy] values
                          "FLIP": None,        # image flip horiz, vert, both
                          "ROTATION": None,    # image rotation angle
-                         "EDGE": None
+                         "EDGE": 0,
+                         "BLUR": None
                          }
         self.MODE = 0
 
@@ -79,13 +89,16 @@ class Video:
                     self.change_mode(direction)
                 self.update_message(direction)
             
-            # Blit message to the user (like current setting or value)
+            
             
             # Edit frame
             frame = self.flip(frame)
             
-            frame = cv.Canny(frame, 125, 125)
+            frame = self.edge_detection(frame)
             
+            
+            
+            # Blit message to the user (like current setting or value)
             self.add_message(frame)
             
             
@@ -99,27 +112,10 @@ class Video:
     
         capture.release()
         cv.destroyAllWindows()
-        
-    
-    def add_message(self, frame):
-        if time.time() < self.MESSAGE_TIME:
-            cv.putText(frame, self.MESSAGE, self.FONT_POSITION, cv.FONT_HERSHEY_COMPLEX, 
-                       self.FONT_SCALE, self.FONT_COLOR, 2)
-            
-    def update_message(self, direction):
-        
-        # SUBMODE CHANGES
-        if direction in ['UP', 'DOWN']:
-            if self.get_mode() == 'FLIP':
-                self.MESSAGE = self.FLIP_MESSAGES[self.SUBMODES['FLIP']]
-        
-        # MODE CHANGES
-        else:
-            self.MESSAGE = self.get_mode()
-        
-    def get_mode(self):
-        return self.MODE_WHEEL[self.MODE]
-        
+
+    # =============================================================================
+    # MODES
+    # =============================================================================
     def change_mode(self, direction):
         self.MODE = (self.MODE + 1) if direction == "RIGHT" else (self.MODE - 1)
         self.MODE %= len(self.MODE_WHEEL)
@@ -129,16 +125,44 @@ class Video:
         mode = self.get_mode()
         if mode == "FLIP":
             self.SUBMODES[mode] = next(self.FLIP_WHEEL)
-
-
+        elif mode == "EDGE":
+            self.SUBMODES[mode] = next(self.EDGE_WHEEL)
+            
+    def get_mode(self):
+        return self.MODE_WHEEL[self.MODE]
+    
+    
+    # =============================================================================
+    # MESSAGES
+    # =============================================================================
+    def add_message(self, frame):
+        if time.time() < self.MESSAGE_TIME:
+            cv.putText(frame, self.MESSAGE, self.FONT_POSITION, cv.FONT_HERSHEY_COMPLEX, 
+                       self.FONT_SCALE, self.FONT_COLOR, 2)
+            
+    def update_message(self, direction):
+        
+        # SUBMODE CHANGES
+        if direction in ['UP', 'DOWN']:
+            mode = self.get_mode()
+            if mode == 'FLIP':
+                self.MESSAGE = self.FLIP_MESSAGES[self.SUBMODES['FLIP']]
+            elif mode == 'EDGE':
+                self.MESSAGE = self.EDGE_MESSAGES[self.SUBMODES['EDGE']]
+        
+        # MODE CHANGES
+        else:
+            self.MESSAGE = self.get_mode()
+    
+    # =============================================================================
+    # FILTERS    
+    # =============================================================================
     def flip(self, frame):
-        """
-        Applies mirror 
-        """
+        """Mirrors the image."""
         val = self.SUBMODES["FLIP"]
-        if val is not None:
-            return cv.flip(frame, val)
-        return frame
+        if val is None:
+            return frame
+        return cv.flip(frame, val)
     
     def translation(self, frame):
         val = self.SUBMODES["TRANSLATION"]
@@ -149,24 +173,31 @@ class Video:
         val = self.SUBMODES["ROTATION"]
         if val is None:
             return frame
-        
-    def _edge_sobel(self, frame):
-        pass
     
+    # =============================================================================
+    # EDGE FILTERS    
+    # =============================================================================
     def _edge_canny(self, frame):
-        pass
+        return cv.Canny(frame, 125, 175)
     
     def _edge_laplacian1(self, frame):
-        return cv.Laplacian(frame, cv.CV_64F) # works on gray or color
+        return cv.Laplacian(frame, cv.CV_64F)
 
     def _edge_laplacian2(self, frame):
-        frame = cv.Laplacian(frame, cv.CV_64F) # works on gray or color
+        frame = cv.Laplacian(frame, cv.CV_64F)
         return np.uint8(np.absolute(frame))
     
     def edge_detection(self, frame):
         val = self.SUBMODES["EDGE"]
         if val is None:
             return frame
+        return val(frame)
+        
+    def blur(self, frame):
+        val = self.SUBMODES["BLUR"]
+        if val is None:
+            return frame
+        return cv.GaussianBlur(frame, (5, 5), cv.BORDER_DEFAULT)
         
         
 
