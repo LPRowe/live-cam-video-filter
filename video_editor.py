@@ -96,15 +96,16 @@ class Video:
                          "BLUR": None,        # control how much the image is blurred
                          "COLOR": None,       # adjust the image colors
                          "SCALE": 1,          # adjust the scale of the image
-                         "FACE": -1,          # adjust minimum neighbors for face detection
-                         "EYES": -1,          # adjust minimum neighbors for eyes detection
-                         "SMILE": -1          # adjust minimum neighbors for smile detection
+                         "FACE": -1,           # adjust minimum neighbors for face detection
+                         "EYES": 0,           # adjust minimum neighbors for eyes detection
+                         "SMILE": -1,         # adjust minimum neighbors for smile detection
+                         "FOREGROUND": 0      # add scenery to the foreground
                          }
         
         self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME * self.WELCOME_MESSAGE  # if time < MESSAGE_TIME then blit messages
         self.MODE_WHEEL = ["FLIP", "EDGE", "BLUR", "COLOR", 
-                           "TRANSLATE_X", "TRANSLATE_Y", "ROTATE", 
-                           "SCALE", "FACE", "SMILE", "EYES"] # list of modes
+                           "TRANSLATE_X", "TRANSLATE_Y", "ROTATE", "FOREGROUND",
+                           "SCALE", "FACE", "SMILE", "EYES", "SECRET_IDENTITY"] # list of modes
         self.FLIP_WHEEL = itertools.cycle([None, 0, 1, -1]) # cycle through 3 image flip options
         self.EDGE_INDEX = 0
         self.EDGE_WHEEL = [None, self._edge_canny, self._edge_laplacian1, self._edge_laplacian2,
@@ -112,6 +113,63 @@ class Video:
         
         self.COLOR_INDEX = 0
         self.COLOR_WHEEL = [None, self._hue_saturation_value, self._gray, self._lab, self._red, self._green, self._blue]
+        
+        dims_fg = (640, 480)
+        self.FOREGROUND_INDEX = 0
+        self.FOREGROUND_WHEEL = [None,
+                                 cv.resize(cv.imread('images/fruit.png', cv.IMREAD_UNCHANGED), dims_fg),
+                                 cv.resize(cv.imread('images/citrus.png', cv.IMREAD_UNCHANGED), dims_fg),
+                                 cv.resize(cv.imread('images/soccer.png', cv.IMREAD_UNCHANGED), dims_fg),
+                                 cv.resize(cv.imread('images/tiger.png', cv.IMREAD_UNCHANGED), dims_fg),
+                                 ]
+        
+        def remove_alpha(img):
+            for i in range(img.shape[0]):
+                for j in range(img.shape[1]):
+                    if img[i][j][3] < self.ALPHA_THRESHOLD:
+                        img[i][j] = [0, 0, 0, 0]
+            return img
+        
+        for i in range(1, len(self.FOREGROUND_WHEEL)):
+            self.FOREGROUND_WHEEL[i] = remove_alpha(self.FOREGROUND_WHEEL[i])
+        
+        self.MASK_INDEX = 0
+        self.MASK_WHEEL = [None, 
+                           cv.resize(cv.imread('images/p5mask-gzwop-imgbin.png', cv.IMREAD_UNCHANGED), (0, 0), fx=0.1, fy=0.1),
+                           cv.resize(cv.imread('images/p5-canidae-fox-mask.png', cv.IMREAD_UNCHANGED), (0, 0), fx=0.1, fy=0.1),
+                           cv.resize(cv.imread('images/female_masquerade_mask.png', cv.IMREAD_UNCHANGED), (0, 0), fx=0.1, fy=0.1),
+                           cv.imread('images/gas_mask.png', cv.IMREAD_UNCHANGED),
+                           cv.resize(cv.imread('images/spiderman_mask.png', cv.IMREAD_UNCHANGED), (0, 0), fx=0.2, fy=0.2),
+                           cv.imread('images/floral_frame.png', cv.IMREAD_UNCHANGED)
+                           ]
+        
+        self.MASK_STYLE = {1: "EYE_MASK",
+                           2: "FACE_MASK",
+                           3: "EYE_MASK",
+                           4: "FACE_MASK",
+                           5: "FACE_MASK",
+                           6: "FACE_MASK"
+                           }
+        
+        self.MASK_SCALE = {1: 1.25, # magnify mask size by scale
+                           2: 1.33,
+                           3: 1.25,
+                           4: 1.33,
+                           5: 2.75,
+                           6: 2.05
+                           } 
+        
+        self.MASK_OFFSET_FACTOR = {1: (0, -0.25),   # (x offset (factor of width), y offset (factor of height))
+                                   2: (0, -0.33),
+                                   3: (0, -0.65),
+                                   4: (0.1, -0.1),
+                                   5: (0, 0.33),
+                                   6: (0, -0.05)
+                                   }
+        
+        self.face_rect = self.eye_rect1 = self.eye_rect2 = tuple()
+        
+        self.BOX_THICKNESS_WHEEL = itertools.cycle([1, 3, 5, -1, 0])
         
         # =============================================================================
         # USER MESSAGES BASED ON CURRENT ACTIVITY
@@ -139,6 +197,23 @@ class Video:
                                self._hue_saturation_value: "Hue Saturated",
                                self._lab: "L*a*b"
                                }
+        
+        self.MASK_MESSAGES = {0: "No Mask",
+                              1: "JOKER",
+                              2: "FOX",
+                              3: "MASQUERADE",
+                              4: "GAS MASK",
+                              5: "SPIDERMAN",
+                              6: "FLORAL"
+                              }
+
+        self.FOREGROUND_MESSAGES = {0: "No Foreground",
+                                    1: "Fruit",
+                                    2: "Citrus",
+                                    3: "Soccer",
+                                    4: "Fire",
+                                    5: "Tiger",
+                                    }
     
         self.BLUR_MESSAGES = lambda k: f"Kernel {k}" if k else "No Smoothing"
         self.ROTATE_MESSAGES = lambda alpha: f"Rotated {alpha} deg." if alpha else "No Rotation"
@@ -160,12 +235,14 @@ class Video:
                          "BLUR": None,        # control how much the image is blurred
                          "COLOR": None,       # adjust the image colors
                          "SCALE": 1,          # adjust the scale of the image
-                         "FACE": -1,          # adjust minimum neighbors for face detection
-                         "EYES": -1,          # adjust minimum neighbors for eyes detection
-                         "SMILE": -1          # adjust minimum neighbors for smile detection
+                         "FACE": -1,           # adjust minimum neighbors for face detection
+                         "EYES": 0,           # adjust minimum neighbors for eyes detection
+                         "SMILE": -1,         # adjust minimum neighbors for smile detection
+                         "FOREGROUND": 0      # add scenery to the foreground
                          }
         self.COLOR_INDEX = 0
         self.EDGE_INDEX = 0
+        self.FOREGROUND_INDEX = 0
 
     def run(self):
         """Main video loop. Handles key input, modifies frame, and displays frames."""
@@ -183,7 +260,12 @@ class Video:
                 self.reset()
                 
             elif key in [ord('h'), ord('H')]:
-                self.BOX_THICKNESS = -1 if self.BOX_THICKNESS != -1 else 3
+                self.BOX_THICKNESS = next(self.BOX_THICKNESS_WHEEL)
+                
+            elif key in [ord('f'), ord('F')]:
+                self.SUBMODES['FACE'] = -1 if self.SUBMODES['FACE'] != -1 else 5
+                self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME
+                self.MESSAGE = "FACE DETECTION: ON" if self.SUBMODES['FACE'] != -1 else "FACE DETECTION: OFF"
             
             # Change Mode or Submode Values
             elif key in self.ARROW_MAP:
@@ -197,6 +279,8 @@ class Video:
             
             # Modify frame
             frame = self.face_detect(frame)
+            frame = self.wear_mask(frame)
+            frame = self.add_foreground(frame)
             frame = self.scale(frame)
             frame = self.adjust_color(frame)
             frame = self.translate(frame)
@@ -261,6 +345,15 @@ class Video:
         elif mode == "SMILE":
             self.SUBMODES[mode] += 1 if direction == 'UP' else -1
             self.SUBMODES[mode] = min(0, max(-1, self.SUBMODES[mode]))
+        elif mode == "SECRET_IDENTITY":
+            self.MASK_INDEX += 1 if direction == "UP" else -1
+            self.MASK_INDEX %= len(self.MASK_WHEEL)
+            self.SUBMODES[mode] = self.MASK_WHEEL[self.MASK_INDEX]
+        elif mode == "FOREGROUND":
+            self.FOREGROUND_INDEX += 1 if direction == "UP" else -1
+            self.FOREGROUND_INDEX %= len(self.FOREGROUND_WHEEL)
+            self.SUBMODES[mode] = self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX]
+            
             
     def get_mode(self):
         return self.MODE_WHEEL[self.MODE]
@@ -298,13 +391,30 @@ class Video:
                 self.MESSAGE = self.SMILE_MESSAGES(self.SUBMODES['SMILE'])
             elif mode == "EYES":
                 self.MESSAGE = self.EYES_MESSAGES(self.SUBMODES['EYES'])
+            elif mode == "SECRET_IDENTITY":
+                self.MESSAGE = self.MASK_MESSAGES[self.MASK_INDEX]
+            elif mode == "FOREGROUND":
+                self.MESSAGE = self.FOREGROUND_MESSAGES[self.FOREGROUND_INDEX]
         
         # MODE CHANGES
         else:
             self.MESSAGE = self.get_mode()
     
     # =============================================================================
-    # FACE DETECTION
+    # FOREGROUND ADDITION
+    # =============================================================================
+    def add_foreground(self, frame):
+        if self.FOREGROUND_INDEX == 0:
+            return frame
+        #foreground = self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX]
+        #if foreground.shape[:2] != frame.shape[:2]:
+        #    foreground = cv.resize(foreground, frame.shape[:2])
+        #frame = self._alpha_overlay(frame, foreground, 0, 0)
+        frame = frame + self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX][:,:,:3]
+        return frame
+    
+    # =============================================================================
+    # FACE DETECTION AND MASK WEARING
     # =============================================================================
     @staticmethod
     def _manhattan(x1, y1, x2, y2):
@@ -321,41 +431,90 @@ class Video:
             return frame # no faces were found
         
         # Draw shape around face
-        x, y, width, height = face_rectangles[0] # for simplicity, just use the first face rectangle for this app
+        self.face_rect = face_rectangles[0]
+        x, y, width, height = self.face_rect # for simplicity, just use the first face rectangle for this app
         center = (x + width // 2, y + height // 2)
         radius = max(width, height) // 2
-        cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
+        if self.BOX_THICKNESS:
+            cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
         
         # Draw shape around eyes
         if self.SUBMODES['EYES'] != -1:
             dx, dy = x, y
-            eye_rectangles = self.CLF_EYES.detectMultiScale(gray[x:x+width, y:y+height], scaleFactor = 1.1, minNeighbors = min_neighbors)
+            eye_rectangles = self.CLF_EYES.detectMultiScale(gray[y:y+height, x:x+width], scaleFactor = 1.1, minNeighbors = min_neighbors)
             if eye_rectangles != ():
-                x, y, width, height = eye_rectangles[0]
+                self.eye_rect1 = eye_rectangles[0]
+                x, y, width, height = self.eye_rect1
                 x += dx
                 y += dy
                 center = (x + width // 2, y + height // 2)
                 radius = max(width, height) // 2
-                cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
+                if self.BOX_THICKNESS:
+                    cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
                 
                 # Pick second eye that is furthest from the first eye
                 if len(eye_rectangles) > 1:
-                    x, y, width, height = max(eye_rectangles, key = lambda rect: self._manhattan(rect[0], rect[1], x, y)) 
+                    self.eye_rect2 = max(eye_rectangles, key = lambda rect: self._manhattan(rect[0], rect[1], x, y)) 
+                    x, y, width, height = self.eye_rect2
                     x += dx
                     y += dy
                     center = (x + width // 2, y + height // 2)
                     radius = max(width, height) // 2
-                    cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
+                    if self.BOX_THICKNESS:
+                        cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
                     
         if self.SUBMODES['SMILE'] != -1:
             smile_rectangle = self.CLF_SMILE.detectMultiScale(gray, scaleFactor = 1.1, minNeighbors = min_neighbors)
-            if smile_rectangle != ():
+            if self.smile_rectangle != ():
                 x, y, width, height = smile_rectangle[0]
                 center = (x + width // 2, y + height // 2)
                 radius = max(width, height) // 2
-                cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
+                if self.BOX_THICKNESS:
+                   cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
                 
         return frame
+    
+    def _alpha_overlay(self, frame, mask, x, y):
+        """overlays only non-alpha portions of the mask on the frame top left corner at x, y"""
+        thresh = self.ALPHA_THRESHOLD
+        for i in range(max(0, -y), min(frame.shape[0] - y, mask.shape[0])):
+            for j in range(max(0, -x), min(frame.shape[1] - x, mask.shape[1])):
+                if mask[i][j][3] > thresh:
+                    frame[y+i][x+j] = mask[i][j][:3]
+        return frame
+        
+    
+    def wear_mask(self, frame):
+        if any([self.MASK_INDEX == 0, self.SUBMODES['FACE'] == -1, self.SUBMODES['EYES'] == -1,
+                self.face_rect == (), self.eye_rect1 == ()]):
+            return frame
+        style = self.MASK_STYLE[self.MASK_INDEX] # is it a face mask or eye mask?
+        scale = self.MASK_SCALE[self.MASK_INDEX] # magnify mask size by scale
+        mask = self.MASK_WHEEL[self.MASK_INDEX]
+        ratio = self.face_rect[2] / mask.shape[1]
+        h0, w0 = mask.shape[0]*ratio, mask.shape[1]*ratio
+        h1, w1 = scale * h0, scale * w0
+        dh, dw = h1 - h0, w1 - w0
+        fx = fy = scale * ratio # ratio if mask width to face width
+        mask = cv.resize(mask, (0, 0), fx = fx, fy = fy)
+        offset_x, offset_y = self.MASK_OFFSET_FACTOR[self.MASK_INDEX]
+        if style == "EYE_MASK":
+            x = self.face_rect[0] + w0 * offset_x
+            y = self.face_rect[1] + self.eye_rect1[1] + h0 * offset_y # top of eye height
+        else:
+            x, y = self.face_rect[0] + w0 * offset_x, self.face_rect[1] + h0 * offset_y
+        y = int(y - dh // 2)
+        x = int(x - dw // 2)
+        frame = self._alpha_overlay(frame, mask, x, y)
+        #        frame[y:y+mask.shape[0], x:x+mask.shape[1]] = np.where(mask[:, :, 3] >= self.ALPHA_THRESHOLD, 
+        #                                                               mask[:,:,:3],
+        #                                                               frame[y:y+mask.shape[0], x:x+mask.shape[1]])
+        #A = mask[mask[:,:,3] > self.ALPHA_THRESHOLD]
+        #B = frame[y:y+mask.shape[0], x:x+mask.shape[1]]
+        #print('b',B.shape)
+        #frame[y:y+mask.shape[0], x:x+mask.shape[1]] = A + B
+        return frame
+            
         
     # =============================================================================
     # COLOR OPTIONS
@@ -469,8 +628,9 @@ class Video:
 
 if __name__ == "__main__":
     video_settings = {
-                'FRAME_SPEED': 50, # one frame per 20 ms
-                'MODE': 0          # Starting edit mode
+                'FRAME_SPEED': 50, # one frame per __ ms
+                'MODE': 0,         # Starting edit mode
+                'ALPHA_THRESHOLD': 10,
                 }
     
     text_settings = {
@@ -487,7 +647,7 @@ if __name__ == "__main__":
                 'CLF_EYES': cv.CascadeClassifier('classifiers/haar_eye.xml'),
                 'CLF_SMILE': cv.CascadeClassifier('classifiers/haar_smile.xml'),
                 'BOX_COLOR': (0, 200, 0), # (B, G, R)
-                'BOX_THICKNESS': 3        # set to -1 to fill in the box
+                'BOX_THICKNESS': 0        # can be cycled with "h" key
                 }
     
     edge_settings = {
