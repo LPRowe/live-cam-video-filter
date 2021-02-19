@@ -4,8 +4,7 @@
   By downloading, copying, installing or using the software you agree to this license.
   If you do not agree to this license, do not download, install,
   copy or use the software.
-
-
+  
                         Intel License Agreement
                 For Open Source Computer Vision Library
 
@@ -37,37 +36,6 @@
  the use of this software, even if advised of the possibility of such damage.
 """
 
-
-
-# matrix filter: sliding repeat image of text that whose intensity is modified by a canny filter
-# AI line filter: ai lines for 5 by 5 squares or 7 by 7 squares
-#                 25 inputs one for each pixel 
-#                 2 outputs: length [0 .. 1] * chord length of square, angle [0 .. 1] * 180 output
-#         training: 2**25 inputs approx 33 million
-#                   generate all inputs and calculate the optimal line length and orientation
-
-# have keyboard input that goes left to right for mode type
-#    modes = [orientation: flip horizontal, vertical, both,
-#             color scheme: red, blue, green only,
-#             blur: adjust level of blurriness,
-#             contour: differeent contour methods, sobel, canny, adaptive threshold, laplacian,
-#             mask: draw a shape that will be auto filled and used as a mask (up / down rectangle, square, star, etc),
-#            ]
-
-
-# Once face tracking is added, ahve a draw or stamp feature that moves the drawing (mustache or glasses) with the face and
-# resizes it based on the height and width of the face detection box and recenters it accordingly
-
-
-
-# TODO:
-# Add a mask that can go over the video
-# Add a skew option
-# Add a drawing option
-# update readme (remember ctrl c and ctrl s functions work)
-#        arrow keys for mode and settings
-#        r key for reset
-
 import time
 import itertools
 
@@ -80,6 +48,8 @@ class Video:
         
         for key in kwargs:
             self.__dict__[key] = kwargs[key]
+            
+        self.FRAME_SHAPE = self.get_frame_shape() # shape of video feed window (height, width)
             
         self.ARROW_MAP = {2555904: "RIGHT",
                           2621440: "DOWN",
@@ -96,7 +66,7 @@ class Video:
                          "BLUR": None,        # control how much the image is blurred
                          "COLOR": None,       # adjust the image colors
                          "SCALE": 1,          # adjust the scale of the image
-                         "FACE": -1,           # adjust minimum neighbors for face detection
+                         "FACE": 7,           # adjust minimum neighbors for face detection
                          "EYES": 0,           # adjust minimum neighbors for eyes detection
                          "SMILE": -1,         # adjust minimum neighbors for smile detection
                          "FOREGROUND": 0      # add scenery to the foreground
@@ -114,24 +84,28 @@ class Video:
         self.COLOR_INDEX = 0
         self.COLOR_WHEEL = [None, self._hue_saturation_value, self._gray, self._lab, self._red, self._green, self._blue]
         
-        dims_fg = (640, 480)
         self.FOREGROUND_INDEX = 0
         self.FOREGROUND_WHEEL = [None,
-                                 cv.resize(cv.imread('images/fruit.png', cv.IMREAD_UNCHANGED), dims_fg),
-                                 cv.resize(cv.imread('images/citrus.png', cv.IMREAD_UNCHANGED), dims_fg),
-                                 cv.resize(cv.imread('images/soccer.png', cv.IMREAD_UNCHANGED), dims_fg),
-                                 cv.resize(cv.imread('images/tiger.png', cv.IMREAD_UNCHANGED), dims_fg),
+                                 cv.resize(cv.imread('images/fruit.png', cv.IMREAD_UNCHANGED), self.FRAME_SHAPE),
+                                 cv.resize(cv.imread('images/citrus.png', cv.IMREAD_UNCHANGED), self.FRAME_SHAPE),
+                                 cv.resize(cv.imread('images/soccer.png', cv.IMREAD_UNCHANGED), self.FRAME_SHAPE),
+                                 cv.resize(cv.imread('images/fire.png', cv.IMREAD_UNCHANGED), self.FRAME_SHAPE),
+                                 cv.resize(cv.imread('images/tiger.png', cv.IMREAD_UNCHANGED), self.FRAME_SHAPE)
                                  ]
+        self.FOREGROUND_PIXEL_MAP = [None]*len(self.FOREGROUND_WHEEL)
         
         def remove_alpha(img):
+            foreground_pixels = []
             for i in range(img.shape[0]):
                 for j in range(img.shape[1]):
                     if img[i][j][3] < self.ALPHA_THRESHOLD:
                         img[i][j] = [0, 0, 0, 0]
-            return img
+                    else:
+                        foreground_pixels.append((i, j))
+            return img, foreground_pixels
         
         for i in range(1, len(self.FOREGROUND_WHEEL)):
-            self.FOREGROUND_WHEEL[i] = remove_alpha(self.FOREGROUND_WHEEL[i])
+            self.FOREGROUND_WHEEL[i], self.FOREGROUND_PIXEL_MAP[i] = remove_alpha(self.FOREGROUND_WHEEL[i])
         
         self.MASK_INDEX = 0
         self.MASK_WHEEL = [None, 
@@ -167,7 +141,7 @@ class Video:
                                    6: (0, -0.05)
                                    }
         
-        self.face_rect = self.eye_rect1 = self.eye_rect2 = tuple()
+        self.face_rect = self.eye_rect1 = self.eye_rect2 = self.smile_rectangle = tuple() # initiated as empty before face recognition starts
         
         self.BOX_THICKNESS_WHEEL = itertools.cycle([1, 3, 5, -1, 0])
         
@@ -195,7 +169,7 @@ class Video:
                                self._blue: "Blue",
                                self._gray: "Gray Scale",
                                self._hue_saturation_value: "Hue Saturated",
-                               self._lab: "L*a*b"
+                               self._lab: "L*a*b*"
                                }
         
         self.MASK_MESSAGES = {0: "No Mask",
@@ -222,6 +196,14 @@ class Video:
         self.FACE_MESSAGES = lambda neigh: f"Min. Neighbors: {neigh}" if neigh != -1 else "Face Detection: OFF"
         self.EYES_MESSAGES = lambda neigh: f"Eye Detection: ON" if neigh != -1 else "Eye Detection: OFF"
         self.SMILE_MESSAGES = lambda neigh: f"Smile Detection: ON" if neigh != -1 else "Smile Detection: OFF"
+    
+    def get_frame_shape(self):
+        """Returns the shape of the input video feed.
+        Used for preprocessing foregrounds."""
+        capture = cv.VideoCapture(0)
+        is_running, frame = capture.read()
+        capture.release()
+        return (frame.shape[1], frame.shape[0])
         
     def reset(self):
         """Reset all settings to default. Activated by key press r or R."""
@@ -235,7 +217,7 @@ class Video:
                          "BLUR": None,        # control how much the image is blurred
                          "COLOR": None,       # adjust the image colors
                          "SCALE": 1,          # adjust the scale of the image
-                         "FACE": -1,           # adjust minimum neighbors for face detection
+                         "FACE": 7,           # adjust minimum neighbors for face detection
                          "EYES": 0,           # adjust minimum neighbors for eyes detection
                          "SMILE": -1,         # adjust minimum neighbors for smile detection
                          "FOREGROUND": 0      # add scenery to the foreground
@@ -243,6 +225,7 @@ class Video:
         self.COLOR_INDEX = 0
         self.EDGE_INDEX = 0
         self.FOREGROUND_INDEX = 0
+        self.face_rect = self.eye_rect1 = self.eye_rect2 = self.smile_rectangle = tuple()
 
     def run(self):
         """Main video loop. Handles key input, modifies frame, and displays frames."""
@@ -258,12 +241,19 @@ class Video:
             # Reset image adjustments to None
             elif key in [ord('r'), ord('R')]:
                 self.reset()
-                
+            
+            # Change thickness of face detection box / circle
             elif key in [ord('h'), ord('H')]:
                 self.BOX_THICKNESS = next(self.BOX_THICKNESS_WHEEL)
+            
+            # Superimpose foreground pixels with frame if True, else writes over frame pixels
+            elif key in [ord('g'), ord('G')]:
+                self.FOREGROUND_SUPERPOSITION = not self.FOREGROUND_SUPERPOSITION
+                self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME
+                self.MESSAGE = "FOREGROUND: SUPERIMPOSED (light)" if self.FOREGROUND_SUPERPOSITION else "FOREGROUND: SOLID (comp. heavy)"
                 
             elif key in [ord('f'), ord('F')]:
-                self.SUBMODES['FACE'] = -1 if self.SUBMODES['FACE'] != -1 else 5
+                self.SUBMODES['FACE'] = -1 if self.SUBMODES['FACE'] != -1 else 7
                 self.MESSAGE_TIME = time.time() + self.MESSAGE_DISPLAY_TIME
                 self.MESSAGE = "FACE DETECTION: ON" if self.SUBMODES['FACE'] != -1 else "FACE DETECTION: OFF"
             
@@ -277,7 +267,7 @@ class Video:
                     self.change_mode(direction)
                 self.update_message(direction)
             
-            # Modify frame
+            # Modify frame, if a feature is off just passes frame pointer back and forth O(1)
             frame = self.face_detect(frame)
             frame = self.wear_mask(frame)
             frame = self.add_foreground(frame)
@@ -401,16 +391,16 @@ class Video:
             self.MESSAGE = self.get_mode()
     
     # =============================================================================
-    # FOREGROUND ADDITION
+    # ADD FOREGROUND TO FRAME
     # =============================================================================
     def add_foreground(self, frame):
         if self.FOREGROUND_INDEX == 0:
             return frame
-        #foreground = self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX]
-        #if foreground.shape[:2] != frame.shape[:2]:
-        #    foreground = cv.resize(foreground, frame.shape[:2])
-        #frame = self._alpha_overlay(frame, foreground, 0, 0)
-        frame = frame + self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX][:,:,:3]
+        if self.FOREGROUND_SUPERPOSITION: # superimposes foreground and frame
+            frame = frame + self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX][:,:,:3]
+        else: # writes foreground over frame (more computation time needed)
+            for (i, j) in self.FOREGROUND_PIXEL_MAP[self.FOREGROUND_INDEX]:
+                frame[i][j] = self.FOREGROUND_WHEEL[self.FOREGROUND_INDEX][i][j][:3]
         return frame
     
     # =============================================================================
@@ -426,8 +416,13 @@ class Video:
             return frame
         
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-        face_rectangles = self.CLF_FACE.detectMultiScale(gray, scaleFactor = 1.1, minNeighbors = min_neighbors)
-        if face_rectangles == ():
+        face_rectangles, reject_levels, confidence = self.CLF_FACE.detectMultiScale3(gray, 
+                                                                           scaleFactor = 1.1, 
+                                                                           minNeighbors = min_neighbors, 
+                                                                           minSize = (150, 150), 
+                                                                           outputRejectLevels = True)
+        face_rectangles = [face_rectangles[i] for i in range(len(face_rectangles)) if confidence[i] >= self.CONFIDENCE_FACE]
+        if face_rectangles == []:
             return frame # no faces were found
         
         # Draw shape around face
@@ -438,11 +433,16 @@ class Video:
         if self.BOX_THICKNESS:
             cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
         
-        # Draw shape around eyes
+        # Detect eyes and draw shape around eyes
         if self.SUBMODES['EYES'] != -1:
             dx, dy = x, y
-            eye_rectangles = self.CLF_EYES.detectMultiScale(gray[y:y+height, x:x+width], scaleFactor = 1.1, minNeighbors = min_neighbors)
-            if eye_rectangles != ():
+            eye_rectangles, reject_levels, confidence = self.CLF_EYES.detectMultiScale3(gray[y:y+height, x:x+width], 
+                                                             scaleFactor = 1.1, 
+                                                             minNeighbors = min_neighbors,
+                                                             minSize = (15, 15),
+                                                             outputRejectLevels = True)
+            eye_rectangles = [eye_rectangles[i] for i in range(len(eye_rectangles)) if confidence[i] > self.CONFIDENCE_EYES]
+            if eye_rectangles != []:
                 self.eye_rect1 = eye_rectangles[0]
                 x, y, width, height = self.eye_rect1
                 x += dx
@@ -462,11 +462,17 @@ class Video:
                     radius = max(width, height) // 2
                     if self.BOX_THICKNESS:
                         cv.circle(frame, center, radius, self.BOX_COLOR, thickness = self.BOX_THICKNESS)
-                    
+        
+        # Detect smile and draw shape around smile    
         if self.SUBMODES['SMILE'] != -1:
-            smile_rectangle = self.CLF_SMILE.detectMultiScale(gray, scaleFactor = 1.1, minNeighbors = min_neighbors)
-            if self.smile_rectangle != ():
-                x, y, width, height = smile_rectangle[0]
+            smile_rectangles, reject_levels, confidence = self.CLF_SMILE.detectMultiScale3(gray, 
+                                                                      scaleFactor = 1.1, 
+                                                                      minNeighbors = min_neighbors,
+                                                                      minSize = (15, 15),
+                                                                      outputRejectLevels = True)
+            smile_rectangles = [smile_rectangles[i] for i in range(len(smile_rectangles)) if confidence[i] > self.CONFIDENCE_SMILE]
+            if self.smile_rectangle != []:
+                x, y, width, height = smile_rectangles[0]
                 center = (x + width // 2, y + height // 2)
                 radius = max(width, height) // 2
                 if self.BOX_THICKNESS:
@@ -475,7 +481,9 @@ class Video:
         return frame
     
     def _alpha_overlay(self, frame, mask, x, y):
-        """overlays only non-alpha portions of the mask on the frame top left corner at x, y"""
+        """Overlays only the mask on top of the frame where the mask is not transparent.
+        x and y are the horizontal and vertical offset between the top left corner fo the frame, 
+        and the top left corner of the mask"""
         thresh = self.ALPHA_THRESHOLD
         for i in range(max(0, -y), min(frame.shape[0] - y, mask.shape[0])):
             for j in range(max(0, -x), min(frame.shape[1] - x, mask.shape[1])):
@@ -485,6 +493,9 @@ class Video:
         
     
     def wear_mask(self, frame):
+        """Places a mask on the user's face.
+        Face masks adjust shape with the face rectangle.
+        Eye masks adjust height according to the first eye rectangle."""
         if any([self.MASK_INDEX == 0, self.SUBMODES['FACE'] == -1, self.SUBMODES['EYES'] == -1,
                 self.face_rect == (), self.eye_rect1 == ()]):
             return frame
@@ -506,13 +517,6 @@ class Video:
         y = int(y - dh // 2)
         x = int(x - dw // 2)
         frame = self._alpha_overlay(frame, mask, x, y)
-        #        frame[y:y+mask.shape[0], x:x+mask.shape[1]] = np.where(mask[:, :, 3] >= self.ALPHA_THRESHOLD, 
-        #                                                               mask[:,:,:3],
-        #                                                               frame[y:y+mask.shape[0], x:x+mask.shape[1]])
-        #A = mask[mask[:,:,3] > self.ALPHA_THRESHOLD]
-        #B = frame[y:y+mask.shape[0], x:x+mask.shape[1]]
-        #print('b',B.shape)
-        #frame[y:y+mask.shape[0], x:x+mask.shape[1]] = A + B
         return frame
             
         
@@ -547,10 +551,11 @@ class Video:
         return cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     
     def _lab(self, frame):
-        """returns L*a*b image"""
+        """returns L*a*b* image"""
         return cv.cvtColor(frame, cv.COLOR_BGR2LAB)
     
     def adjust_color(self, frame):
+        """Applies one of the above color adjustments to the image."""
         func = self.SUBMODES["COLOR"]
         if func is None:
             return frame
@@ -560,13 +565,14 @@ class Video:
     # GEOMETRIC FILTERS    
     # =============================================================================
     def flip(self, frame):
-        """Mirrors the image."""
+        """Mirrors the image about x-axis, about y-axis, or both."""
         val = self.SUBMODES["FLIP"]
         if val is None:
             return frame
         return cv.flip(frame, val)
     
     def translate(self, frame):
+        """Shifts the image left, right, up, or down"""
         dx, dy = self.SUBMODES["TRANSLATE_X"], self.SUBMODES["TRANSLATE_Y"]
         if (dx | dy) == 0:
             return frame
@@ -574,6 +580,7 @@ class Video:
         return cv.warpAffine(frame, translation_matrix, (frame.shape[1], frame.shape[0]))
     
     def rotate(self, frame):
+        """Rotates the image about it's center point."""
         angle = self.SUBMODES["ROTATE"]
         if angle == 0:
             return frame
@@ -583,44 +590,53 @@ class Video:
         return cv.warpAffine(frame, rotation_matrix, (height, width))
     
     def scale(self, frame):
-        """Resizes the frame by scale s"""
+        """Resizes the frame by scale s."""
         s = self.SUBMODES["SCALE"]
         if s == 1:
             return frame
-        return cv.resize(frame, (int(frame.shape[1] * s), int(frame.shape[0] * s)), interpolation=cv.INTER_AREA)
+        return cv.resize(frame, (int(frame.shape[1] * s), int(frame.shape[0] * s)), interpolation=cv.INTER_AREA)        
         
     # =============================================================================
     # EDGE AND BLUR FILTERS 
     # =============================================================================
     def _sobel_x(self, frame, gray = None):
+        """Applies Sobel edge detection filter using x-gradients (highlights vertical lines) to frame."""
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY) if gray is None else gray
         return cv.Sobel(gray, cv.CV_64F, 1, 0) # 1 x dir and 0 y dir
         
     def _sobel_y(self, frame, gray = None):
+        """Applies Sobel edge detection filter using y-gradients (highlights horizontal lines) to frame."""
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY) if gray is None else gray
         return cv.Sobel(gray, cv.CV_64F, 0, 1) # 0 x dir and 1 y dir
         
     def _sobel_xy(self, frame):
+        """Applies Sobel edge detection filter to frame."""
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
         return cv.bitwise_or(self._sobel_x(frame, gray = gray), self._sobel_y(frame, gray = gray))
     
     def _edge_canny(self, frame):
+        """Applies Canny edge detection filter to frame."""
         return cv.Canny(frame, self.CANNY_THRESHOLD1, self.CANNY_THRESHOLD2)
     
     def _edge_laplacian1(self, frame):
+        """Applies Laplacian edge detection filter to the frame."""
         return cv.Laplacian(frame, cv.CV_64F)
 
     def _edge_laplacian2(self, frame):
+        """Applies Laplacian edge detection filter to the frame."""
         frame = cv.Laplacian(frame, cv.CV_64F)
         return np.uint8(np.absolute(frame))
     
     def edge_detection(self, frame):
+        """Applies one of the above edge detection methods to frame."""
         val = self.SUBMODES["EDGE"]
         if val is None:
             return frame
         return val(frame)
         
     def blur(self, frame):
+        """Uses pixel averaging to blur the frame, larger kernel size results in greater blurring.
+        Kernel size (val, val) determines the size of a region over which to average for each pixel."""
         val = self.SUBMODES["BLUR"]
         if val is None:
             return frame
@@ -631,11 +647,12 @@ if __name__ == "__main__":
                 'FRAME_SPEED': 50, # one frame per __ ms
                 'MODE': 0,         # Starting edit mode
                 'ALPHA_THRESHOLD': 10,
+                'FOREGROUND_SUPERPOSITION': True # False: foreground writes over image, True: superimposes pixels
                 }
     
     text_settings = {
                 'MESSAGE_DISPLAY_TIME': 2, # messages will display for 2 seconds
-                'MESSAGE': "hello world",
+                'MESSAGE': "hello world",  # message displayed on start
                 'WELCOME_MESSAGE': True,
                 'FONT_COLOR': (255, 255, 255),
                 'FONT_SCALE': 1.0,
@@ -647,7 +664,10 @@ if __name__ == "__main__":
                 'CLF_EYES': cv.CascadeClassifier('classifiers/haar_eye.xml'),
                 'CLF_SMILE': cv.CascadeClassifier('classifiers/haar_smile.xml'),
                 'BOX_COLOR': (0, 200, 0), # (B, G, R)
-                'BOX_THICKNESS': 0        # can be cycled with "h" key
+                'BOX_THICKNESS': 0,       # can be cycled with "h" key
+                'CONFIDENCE_FACE': 3,     # 0 is minimum, 9 is very high filters out faces below this confidence level
+                'CONFIDENCE_EYES': 1.5,
+                'CONFIDENCE_SMILE': 1.5
                 }
     
     edge_settings = {
