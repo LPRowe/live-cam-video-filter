@@ -21,14 +21,20 @@ mask = cv.resize(img, (0, 0), fx=0.2, fy=0.2)
 #cv.imshow('resized', img2)
 
 
-
+alpha = mask[:,:,3]
+m = mask[:,:,3] > 10
 
 x = 100
 y = 200
-for i in range(mask.shape[0]):
-    for j in range(mask.shape[1]):
-        if mask[i][j][3] > 10:
-            face[y+i][x+j] = mask[i][j][:3]
+subface = face[y:y+mask.shape[0], x:x+mask.shape[1]]
+
+#face[y:y+mask.shape[0], x:x+mask.shape[1]] = mask[mask[:,:,3] > 10]
+
+
+#for i in range(mask.shape[0]):
+#    for j in range(mask.shape[1]):
+#        if mask[i][j][3] > 10:
+#            face[y+i][x+j] = mask[i][j][:3]
         
 cv.imshow('x', face)
 

@@ -65,11 +65,7 @@ Apply basic filters to video in real time.
 <b>left / right-arrow</b>: Change between features<br>
 <b>up / down-arrow</b>: Change the current feature's settings<br>
 
-
-
-
-
-# stackable
+# stackable filters
 
 The filters are applied sequentially to the video frame such that filteres of different types can be used together.<br><br>
 
@@ -93,6 +89,6 @@ Or a color filter can be applied on top of a Laplacian edge detection filter wit
 
 Please read the LICENSE file as well as the Intel licence located in the header of video_editor.py
 
-The haar_cascade face and eye classifiers were obtained here: 
+The latter is included because the haar_cascade face and eye classifiers were obtained here: https://github.com/opencv/opencv/tree/master/data
 
 All images were labeled free for personal use and the original artists are listed in images/artist_credits.txt.
